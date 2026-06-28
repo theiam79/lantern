@@ -8,7 +8,10 @@ public static class HitLocationDeck
 {
     public const string Substream = "hitloc-shuffle";
 
-    public static (HitLocationDeckState Deck, RngCursors Cursors) Build(IReadOnlyList<HitLocCardDef> cards, RngCursors cursors)
+    public static (HitLocationDeckState Deck, RngCursors Cursors) Build(
+        IReadOnlyList<HitLocCardDef> cards,
+        RngCursors cursors
+    )
     {
         var multiset = new List<string>();
         foreach (var c in cards)
@@ -26,7 +29,11 @@ public static class HitLocationDeck
     /// the draw stops immediately after including it (the rest of the count is left undrawn).
     /// </summary>
     public static (ImmutableArray<string> Drawn, HitLocationDeckState Deck, RngCursors Cursors) Draw(
-        HitLocationDeckState deck, int count, RngCursors cursors, Func<string, bool>? stopAfter = null)
+        HitLocationDeckState deck,
+        int count,
+        RngCursors cursors,
+        Func<string, bool>? stopAfter = null
+    )
     {
         var drawPile = deck.DrawPile.ToList();
         var discard = deck.DiscardPile.ToList();
@@ -37,7 +44,8 @@ public static class HitLocationDeck
         {
             if (drawPile.Count == 0)
             {
-                if (discard.Count == 0) break; // deck exhausted
+                if (discard.Count == 0)
+                    break; // deck exhausted
                 var (perm, next) = RngEngine.Shuffle(cur, Substream, discard.Count);
                 drawPile = perm.Select(i => discard[i]).ToList();
                 discard.Clear();
@@ -47,7 +55,8 @@ public static class HitLocationDeck
             var top = drawPile[0];
             drawPile.RemoveAt(0);
             drawn.Add(top);
-            if (stopAfter?.Invoke(top) == true) break; // Trap ends the draw immediately
+            if (stopAfter?.Invoke(top) == true)
+                break; // Trap ends the draw immediately
         }
 
         var newDeck = deck with
@@ -60,9 +69,10 @@ public static class HitLocationDeck
     }
 
     /// <summary>Move this attack's drawn cards into the discard pile.</summary>
-    public static HitLocationDeckState DiscardDrawn(HitLocationDeckState deck) => deck with
-    {
-        DiscardPile = [.. deck.DiscardPile, .. deck.DrawnThisAttack],
-        DrawnThisAttack = [],
-    };
+    public static HitLocationDeckState DiscardDrawn(HitLocationDeckState deck) =>
+        deck with
+        {
+            DiscardPile = [.. deck.DiscardPile, .. deck.DrawnThisAttack],
+            DrawnThisAttack = [],
+        };
 }

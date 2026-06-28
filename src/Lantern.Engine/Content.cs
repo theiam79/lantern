@@ -35,7 +35,8 @@ public sealed class ContentPack(
     FormulaConfig formula,
     IReadOnlyDictionary<string, MonsterDef> monsters,
     IReadOnlyDictionary<string, GearDef> gear,
-    IReadOnlyDictionary<string, IReadOnlyList<HitLocCardDef>> hitLocationDecks) : IContentPack
+    IReadOnlyDictionary<string, IReadOnlyList<HitLocCardDef>> hitLocationDecks
+) : IContentPack
 {
     public string PackId { get; } = packId;
     public FormulaConfig Formula { get; } = formula;

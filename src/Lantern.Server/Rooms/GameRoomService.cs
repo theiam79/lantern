@@ -22,10 +22,13 @@ public sealed class GameRoomService(
     IHubContext<GameHubV1, IGameClient> hub,
     ContentService content,
     IConfiguration config,
-    ILoggerFactory loggers) : IGameRoomService
+    ILoggerFactory loggers
+) : IGameRoomService
 {
     private readonly ConcurrentDictionary<string, RoomActor> _rooms = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, (string Room, string Player)> _connections = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (string Room, string Player)> _connections = new(
+        StringComparer.Ordinal
+    );
     private readonly SemaphoreSlim _loadLock = new(1, 1);
     private readonly ILogger _log = loggers.CreateLogger<GameRoomService>();
 
@@ -77,14 +80,16 @@ public sealed class GameRoomService(
     public async Task<IntentAck> SubmitIntentAsync(IntentEnvelope env)
     {
         var actor = await GetOrLoadAsync(env.RoomCode);
-        if (actor is null) return new IntentAck(false, null, "room_not_found", env.ClientIntentId);
+        if (actor is null)
+            return new IntentAck(false, null, "room_not_found", env.ClientIntentId);
         return await actor.SubmitAsync(env);
     }
 
     public async Task RequestSnapshotAsync(string roomCode, string connectionId)
     {
         var actor = await GetOrLoadAsync(roomCode);
-        if (actor is not null) await actor.SendSnapshotToAsync(connectionId);
+        if (actor is not null)
+            await actor.SendSnapshotToAsync(connectionId);
     }
 
     public async Task OnDisconnectedAsync(string connectionId)
@@ -95,31 +100,42 @@ public sealed class GameRoomService(
 
     private static void RequireContractVersion(int v)
     {
-        if (v < Protocol.MinSupported || v > Protocol.Version) throw new HubException("contract_version_mismatch");
+        if (v < Protocol.MinSupported || v > Protocol.Version)
+            throw new HubException("contract_version_mismatch");
     }
 
     private async Task<RoomActor?> GetOrLoadAsync(string roomCode)
     {
-        if (_rooms.TryGetValue(roomCode, out var existing)) return existing;
+        if (_rooms.TryGetValue(roomCode, out var existing))
+            return existing;
 
         await _loadLock.WaitAsync();
         try
         {
-            if (_rooms.TryGetValue(roomCode, out existing)) return existing;
+            if (_rooms.TryGetValue(roomCode, out existing))
+                return existing;
 
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
             var room = await db.Rooms.AsNoTracking().FirstOrDefaultAsync(r => r.RoomCode == roomCode);
-            if (room is null || room.Status == "ended") return null;
+            if (room is null || room.Status == "ended")
+                return null;
 
             var pack = content.GetPack(room.ContentPackId);
-            if (pack is null) { _log.LogError("Room {Room} references missing pack {Pack}", roomCode, room.ContentPackId); return null; }
+            if (pack is null)
+            {
+                _log.LogError("Room {Room} references missing pack {Pack}", roomCode, room.ContentPackId);
+                return null;
+            }
 
             var actor = new RoomActor(roomCode, pack, scopes, hub, loggers.CreateLogger<RoomActor>());
             await actor.RehydrateAsync();
             _rooms[roomCode] = actor;
             return actor;
         }
-        finally { _loadLock.Release(); }
+        finally
+        {
+            _loadLock.Release();
+        }
     }
 }

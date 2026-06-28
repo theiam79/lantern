@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -15,5 +14,4 @@
     <ProjectReference Include="..\..\src\Lantern.Engine\Lantern.Engine.csproj" />
     <ProjectReference Include="..\..\src\Lantern.Contracts\Lantern.Contracts.csproj" />
   </ItemGroup>
-
 </Project>

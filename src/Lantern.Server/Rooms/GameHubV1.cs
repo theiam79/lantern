@@ -19,9 +19,13 @@ public interface IGameClient
 public sealed class GameHubV1(IGameRoomService rooms) : Hub<IGameClient>
 {
     public Task<CreateRoomResult> CreateRoom(CreateRoomRequest req) => rooms.CreateRoomAsync(req, Context.ConnectionId);
+
     public Task<JoinRoomResult> JoinRoom(JoinRoomRequest req) => rooms.JoinRoomAsync(req, Context.ConnectionId);
+
     public Task<JoinRoomResult> Resume(ResumeRequest req) => rooms.ResumeAsync(req, Context.ConnectionId);
+
     public Task<IntentAck> SubmitIntent(IntentEnvelope env) => rooms.SubmitIntentAsync(env);
+
     public Task RequestSnapshot(string roomCode) => rooms.RequestSnapshotAsync(roomCode, Context.ConnectionId);
 
     public override Task OnDisconnectedAsync(Exception? exception) => rooms.OnDisconnectedAsync(Context.ConnectionId);

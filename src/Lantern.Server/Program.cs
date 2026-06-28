@@ -15,12 +15,14 @@ builder.Services.AddDbContext<LanternDbContext>(o => o.UseSqlite($"Data Source={
 
 builder.Services.AddSingleton<ContentService>();
 builder.Services.AddSingleton<IGameRoomService, GameRoomService>();
-builder.Services.AddSignalR().AddJsonProtocol(o =>
-{
-    o.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-    o.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-    o.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-});
+builder
+    .Services.AddSignalR()
+    .AddJsonProtocol(o =>
+    {
+        o.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        o.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+        o.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 
 var app = builder.Build();
 

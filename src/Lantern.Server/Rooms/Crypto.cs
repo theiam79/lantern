@@ -13,7 +13,8 @@ internal static class Crypto
         Span<byte> b = stackalloc byte[8];
         RandomNumberGenerator.Fill(b);
         var sb = new StringBuilder(8);
-        for (var i = 0; i < 8; i++) sb.Append(Crockford[b[i] & 31]);
+        for (var i = 0; i < 8; i++)
+            sb.Append(Crockford[b[i] & 31]);
         return sb.ToString();
     }
 
@@ -25,12 +26,12 @@ internal static class Crypto
         return Base64Url(b);
     }
 
-    public static string Hash(string value) =>
-        Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    public static string Hash(string value) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     public static bool FixedTimeEquals(string? a, string? b)
     {
-        if (a is null || b is null) return false;
+        if (a is null || b is null)
+            return false;
         var ba = Encoding.UTF8.GetBytes(a);
         var bb = Encoding.UTF8.GetBytes(b);
         return CryptographicOperations.FixedTimeEquals(ba, bb);

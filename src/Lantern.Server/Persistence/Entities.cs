@@ -32,9 +32,9 @@ public sealed class JournalRow
     public required string RoomCode { get; set; }
     public long Seq { get; set; }
     public required string ActorPlayerId { get; set; }
-    public string? IntentJson { get; set; }       // serialized Lantern.Contracts.Intent (polymorphic); null = genesis
+    public string? IntentJson { get; set; } // serialized Lantern.Contracts.Intent (polymorphic); null = genesis
     public string? RevertedSeqsJson { get; set; } // JSON long[]; set on undo entries
-    public string? ClientIntentId { get; set; }   // idempotency key
+    public string? ClientIntentId { get; set; } // idempotency key
     public DateTimeOffset CommittedAt { get; set; }
 }
 

@@ -53,4 +53,17 @@ aspire run
 pnpm -C web dev
 ```
 
-Next steps: serve the Vite build from `Lantern.Server/wwwroot` for single-origin prod hosting, and add the SignalR `GameHubV1` + room registry (see [`docs/PLAN.md`](docs/PLAN.md) §3).
+## Code style
+
+Microsoft / Roslyn conventions (latest C# features). Formatting is owned by **CSharpier**
+(a pinned local tool); language style + naming live in `.editorconfig` and run in-build
+(`EnforceCodeStyleInBuild`).
+
+```bash
+dotnet tool restore        # once, to install the pinned CSharpier
+dotnet csharpier format .  # auto-format all C#
+dotnet csharpier check .   # verify formatting (CI-style)
+```
+
+A pre-commit/CI hook running `dotnet csharpier check .` + `dotnet build` is a recommended
+follow-up (needs the GitHub token's Workflows scope to commit `.github/workflows/`).

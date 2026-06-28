@@ -19,4 +19,5 @@ public sealed record JournalEntry(
     DateTimeOffset CommittedAt,
     Intent? Intent,
     ImmutableArray<long> RevertedSeqs,
-    string? ClientIntentId);
+    string? ClientIntentId
+);

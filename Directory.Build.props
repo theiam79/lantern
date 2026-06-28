@@ -1,5 +1,4 @@
 <Project>
-
   <!-- Shared build settings for all Lantern .NET projects. -->
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
@@ -8,5 +7,4 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
-
 </Project>

@@ -9,10 +9,17 @@ public class ShowdownEngineTests
     private static readonly AttributesDto Attrs = new(Mov: 5, Acc: 0, Str: 0, Eva: 0, Lck: 0, Spd: 0);
 
     // Helper: apply an intent, assert accepted, record the journal entry, return new state.
-    private static ShowdownState Step(ref List<JournalEntry> journal, ShowdownState? state, Intent intent, long seq, IContentPack pack)
+    private static ShowdownState Step(
+        ref List<JournalEntry> journal,
+        ShowdownState? state,
+        Intent intent,
+        long seq,
+        IContentPack pack
+    )
     {
         var r = ShowdownEngine.Reduce(state, intent, seq, pack);
-        if (!r.Accepted) throw new Exception($"intent {intent.GetType().Name} rejected: {r.RejectReason}");
+        if (!r.Accepted)
+            throw new Exception($"intent {intent.GetType().Name} rejected: {r.RejectReason}");
         journal.Add(new JournalEntry("R", seq, "p1", DateTimeOffset.UnixEpoch, intent, [], $"c{seq}"));
         return r.State!;
     }
@@ -32,8 +39,8 @@ public class ShowdownEngineTests
         s = Step(ref journal, s, new DeclareAttackIntent("s1", TestPack.Sword.Id, "white-lion"), 3, pack);
         await Assert.That(s.Status).IsEqualTo(ShowdownStatus.AwaitingHits);
         await Assert.That(s.Attack!.AttackId).IsEqualTo("atk-3");
-        await Assert.That(s.Attack!.AttackDice).IsEqualTo(3);   // weapon speed
-        await Assert.That(s.Attack!.HitsOn).IsEqualTo(6);       // weapon acc 6 - surv 0 + evasion 0
+        await Assert.That(s.Attack!.AttackDice).IsEqualTo(3); // weapon speed
+        await Assert.That(s.Attack!.HitsOn).IsEqualTo(6); // weapon acc 6 - surv 0 + evasion 0
 
         s = Step(ref journal, s, new EnterHitsIntent("atk-3", "count", null, 2), 4, pack);
         await Assert.That(s.Status).IsEqualTo(ShowdownStatus.DrawingLocations);

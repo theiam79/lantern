@@ -13,7 +13,8 @@ public sealed record IntentEnvelope(
     string PlayerId,
     string PlayerToken,
     string ClientIntentId,
-    JsonElement Intent);
+    JsonElement Intent
+);
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(StartShowdownIntent), "StartShowdown")]
@@ -34,7 +35,9 @@ public abstract record Intent;
 public sealed record StartShowdownIntent(string MonsterId, string MonsterLevelId, ulong? MasterSeed) : Intent;
 
 public sealed record AttributesDto(int Mov, int Acc, int Str, int Eva, int Lck, int Spd);
-public sealed record AddSurvivorIntent(string SurvivorId, string Name, AttributesDto Attributes, string WeaponId) : Intent;
+
+public sealed record AddSurvivorIntent(string SurvivorId, string Name, AttributesDto Attributes, string WeaponId)
+    : Intent;
 
 // ---- attack mini-FSM ----
 public sealed record DeclareAttackIntent(string SurvivorId, string WeaponId, string TargetMonsterId) : Intent;
@@ -45,18 +48,23 @@ public sealed record EnterHitsIntent(string AttackId, string Mode, int[]? Rolls,
 public sealed record DrawHitLocationsIntent(string AttackId) : Intent;
 
 /// <summary>Mode "roll": compare <see cref="Roll"/> vs woundsOn (+lantern crit). Mode "outcome": trust <see cref="Outcome"/>.</summary>
-public sealed record EnterWoundIntent(string AttackId, string LocationCardId, string Mode, int? Roll, string? Outcome) : Intent;
+public sealed record EnterWoundIntent(string AttackId, string LocationCardId, string Mode, int? Roll, string? Outcome)
+    : Intent;
 
 public sealed record ApplyAttackResultIntent(string AttackId) : Intent;
 
 // ---- manual monster turn (no AI deck in the MVP) ----
 public sealed record ManualSurvivorWoundDto(string SurvivorId, int Amount);
+
 public sealed record RecordMonsterTurnIntent(string Note, ManualSurvivorWoundDto? SurvivorWound) : Intent;
 
 // ---- host-only ----
 public sealed record SetRoomPasswordIntent(string? Password) : Intent;
+
 public sealed record UndoIntent(int Count, long? TargetSeq) : Intent;
+
 public sealed record HostOverrideIntent(StatePatchDto Patch, string Reason) : Intent;
+
 public sealed record EndShowdownIntent(string Result) : Intent;
 
 /// <summary>Typed, whitelisted patch (NOT a free JSON pointer). See SPEC §5.7.</summary>

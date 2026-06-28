@@ -23,7 +23,11 @@ public static class RngEngine
     private static ulong Fnv1a(string s)
     {
         ulong h = 0xCBF29CE484222325UL;
-        foreach (var ch in s) { h ^= ch; h *= 0x100000001B3UL; }
+        foreach (var ch in s)
+        {
+            h ^= ch;
+            h *= 0x100000001B3UL;
+        }
         return h;
     }
 
@@ -33,7 +37,11 @@ public static class RngEngine
     /// Fisher-Yates permutation of [0, n). Returns the permutation and the advanced cursors.
     /// Resumes from the substream's stored cursor so repeated folds are identical.
     /// </summary>
-    public static (ImmutableArray<int> Permutation, RngCursors Cursors) Shuffle(RngCursors cursors, string substream, int n)
+    public static (ImmutableArray<int> Permutation, RngCursors Cursors) Shuffle(
+        RngCursors cursors,
+        string substream,
+        int n
+    )
     {
         var seed = SubstreamSeed(cursors.MasterSeed, substream);
         var cur = cursors.PerSubstream.GetValueOrDefault(substream, 0UL);
@@ -42,7 +50,8 @@ public static class RngEngine
         ulong drawn = 0;
 
         var arr = new int[n];
-        for (var i = 0; i < n; i++) arr[i] = i;
+        for (var i = 0; i < n; i++)
+            arr[i] = i;
         for (var i = n - 1; i >= 1; i--)
         {
             state += Gamma;
