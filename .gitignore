@@ -23,7 +23,8 @@ data/local/
 # ---- Node / web ----
 node_modules/
 web/dist/
-src/Lantern.Server/wwwroot/assets/
+# the Svelte SPA is built into the server's wwwroot — a generated artifact
+src/Lantern.Server/wwwroot/
 .vite/
 *.log
 
