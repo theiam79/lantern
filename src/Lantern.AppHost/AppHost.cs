@@ -1,11 +1,15 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Vite dev server (Svelte SPA). In development the server reverse-proxies to it;
-// `aspire run` launches it alongside the server.
-var web = builder.AddNpmApp("web", "../../web", "dev")
-    .WithHttpEndpoint(port: 5173, targetPort: 5173, isProxied: false);
+var server = builder.AddProject<Projects.Lantern_Server>("server");
 
-builder.AddProject<Projects.Lantern_Server>("server")
-    .WaitFor(web);
+// Vite dev server (Svelte SPA), via Aspire.Hosting.JavaScript. In dev it serves the
+// browser (native HMR) and proxies /hub + /api to the server; for publish it builds
+// the static SPA the server serves from wwwroot. Managed port (not pinned).
+builder.AddViteApp("web", "../../web")
+    .WithPnpm()
+    .WithReference(server)
+    .WaitFor(server)
+    .WithEnvironment("VITE_SERVER_URL", server.GetEndpoint("http"))
+    .WithEnvironment("BROWSER", "none");
 
 builder.Build().Run();
