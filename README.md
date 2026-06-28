@@ -40,18 +40,21 @@ Host-provided content lives under `content/local/` and `content/assets/` (and is
 Toolchain (installed on the dev VM; on `PATH` via `~/.bashrc`): **.NET 10 SDK**, **.NET Aspire CLI 13.4**, **Node LTS + pnpm**.
 
 ```bash
-# build everything
+dotnet tool restore        # restore pinned tools (CSharpier)
 dotnet build Lantern.slnx
 
-# run the engine tests (TUnit uses Microsoft.Testing.Platform — run, don't `dotnet test`)
-dotnet run --project tests/Lantern.Engine.Tests -c Release
-
-# run the whole app via Aspire (dashboard + server resource)
+# Run the whole app. Aspire orchestrates BOTH resources — the ASP.NET server AND the Vite
+# frontend (AppHost: AddViteApp("web", ...).WithPnpm()) — plus the dashboard. Open the "web"
+# resource URL from the dashboard. In dev the Vite resource serves the SPA (HMR) and proxies
+# /hub + /api to the server (Aspire injects VITE_SERVER_URL); the client uses relative /hub/v1.
 aspire run
 
-# the Svelte client on its own (dev server + HMR)
-pnpm -C web dev
+# engine tests (TUnit uses Microsoft.Testing.Platform — run, don't `dotnet test`)
+dotnet run --project tests/Lantern.Engine.Tests -c Release
 ```
+
+Running a piece standalone is rarely needed but possible: `dotnet run --project src/Lantern.Server`
+and `pnpm -C web dev`.
 
 ## Code style
 
@@ -67,3 +70,31 @@ dotnet csharpier check .   # verify formatting (CI-style)
 
 A pre-commit/CI hook running `dotnet csharpier check .` + `dotnet build` is a recommended
 follow-up (needs the GitHub token's Workflows scope to commit `.github/workflows/`).
+
+## Test hosting (exe.dev)
+
+This VM can expose the app over the exe.dev HTTPS proxy for a real remote session. Run the
+server in **Production** — where it's the single origin (serves the built SPA from `wwwroot`
+*and* the SignalR hub) — then map the port. (Dev `aspire run` is for local work; for a shared
+test you want the single-origin Production server, not the Vite dev server + dashboard.)
+
+```bash
+pnpm -C web build                       # build SPA -> Lantern.Server/wwwroot
+
+LANTERN_HOST_PASSWORD='<pick-a-secret>' \
+ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS='http://0.0.0.0:8080' \
+  dotnet run --no-launch-profile --project src/Lantern.Server -c Release
+
+# Expose port 8080 at https://slopdom-slop.exe.xyz/ (PRIVATE by default — exe.dev login required):
+ssh exe.dev share port slopdom-slop 8080
+# Make it reachable by friends without exe.dev accounts (revert with set-private):
+ssh exe.dev share set-public slopdom-slop
+```
+
+- **Bind `0.0.0.0`** so the proxy can reach the service.
+- The proxy terminates TLS and forwards `X-Forwarded-*`, which the server honors
+  (`UseForwardedHeaders`), so **SignalR runs over WSS at the same origin** — no CORS, relative
+  `/hub/v1`. Room creation is gated by `LANTERN_HOST_PASSWORD`; players join with the room code.
+- Ports **3000–9999** are also directly reachable at `https://slopdom-slop.exe.xyz:PORT/`
+  without `share port`.
+- A persistent host should set a stable `Lantern:DbPath` (the SQLite file) on a kept volume.

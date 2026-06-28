@@ -2,12 +2,24 @@ using System.Text.Json;
 using Lantern.Server.Content;
 using Lantern.Server.Persistence;
 using Lantern.Server.Rooms;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Aspire service defaults: OpenTelemetry, health checks, service discovery, resilience.
 builder.AddServiceDefaults();
+
+// Behind the exe.dev HTTPS proxy (the only ingress in prod; localhost in dev): honor
+// X-Forwarded-* so scheme/host are correct for SignalR/WSS. Clearing the known-proxy lists
+// trusts the forwarder, which is safe because the app is only reachable via that proxy.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+});
 
 // Persistence: SQLite (WAL set at startup). Single file; one writer per room via RoomActor.
 var dbPath = builder.Configuration["Lantern:DbPath"] ?? "lantern.db";
@@ -34,6 +46,8 @@ using (var scope = app.Services.CreateScope())
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 }
 _ = app.Services.GetRequiredService<ContentService>();
+
+app.UseForwardedHeaders();
 
 app.MapDefaultEndpoints();
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
