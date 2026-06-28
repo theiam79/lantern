@@ -43,6 +43,8 @@ Thumbs.db
 content/assets/
 !content/assets/.gitkeep
 content/scans/
+# host-provided mechanical decks (e.g. hit-location) — never source-controlled
+content/local/
 *.kdmscan
 # card image formats anywhere under content/
 content/**/*.png
