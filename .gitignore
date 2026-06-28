@@ -1,0 +1,52 @@
+# ---- .NET ----
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+artifacts/
+*.nupkg
+
+# ---- Aspire / local run ----
+*.binlog
+
+# ---- SQLite / local data ----
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/local/
+
+# ---- Node / web ----
+node_modules/
+web/dist/
+src/Lantern.Server/wwwroot/assets/
+.vite/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# =====================================================================
+# KDM CONTENT POLICY — never commit gameplay artifacts (see README).
+# Card IMAGES/ART and player-scanned AI / Hit-Location deck data are
+# host-provided, session-local, and MUST NOT be source-controlled.
+# Shippable "Scribe-scope" mechanical packs live in content/packs/.
+# =====================================================================
+content/assets/
+!content/assets/.gitkeep
+content/scans/
+*.kdmscan
+# card image formats anywhere under content/
+content/**/*.png
+content/**/*.jpg
+content/**/*.jpeg
+content/**/*.webp
+content/**/*.heic
+content/**/*.tiff
