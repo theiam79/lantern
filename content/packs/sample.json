@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "packId": "sample",
+  "displayName": "Sample (synthetic placeholder data — NOT Kingdom Death content)",
+  "weapons": [
+    { "id": "training-blade", "name": "Training Blade", "type": "melee", "speed": 3, "accuracy": 6, "strength": 3 },
+    { "id": "practice-club", "name": "Practice Club", "type": "melee", "speed": 2, "accuracy": 7, "strength": 4 }
+  ],
+  "monsters": [
+    {
+      "id": "sample-beast",
+      "name": "Sample Beast",
+      "levels": [
+        {
+          "id": "prologue",
+          "name": "Prologue",
+          "stats": { "movement": 5, "toughness": 8, "speed": 1, "accuracy": 0, "damage": 1, "luck": 0, "evasion": 0 },
+          "woundThreshold": 6,
+          "hitLocationDeckRef": "host:sample-beast-hitloc"
+        }
+      ]
+    }
+  ],
+  "woundFormula": { "kind": "toughness-minus-strength", "min": 2, "max": 10 }
+}
