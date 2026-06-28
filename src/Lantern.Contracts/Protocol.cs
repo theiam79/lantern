@@ -6,7 +6,11 @@ namespace Lantern.Contracts;
 /// </summary>
 public static class Protocol
 {
+    /// <summary>Bump on ANY breaking change to intents or state.</summary>
     public const int Version = 1;
+
+    /// <summary>Server accepts requests in [MinSupported, Version].</summary>
+    public const int MinSupported = 1;
 }
 
 /// <summary>
