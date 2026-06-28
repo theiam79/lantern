@@ -33,7 +33,7 @@ Lantern ships **no Kingdom Death gameplay artifacts you'd need to play without o
 - **Shippable ("Scribe-scope"):** card *names*, deck-build composition, and mechanical *numbers* (gear stats, monster stat lines, hit numbers) — the same class of data Scribe already exposes.
 - **You must provide (never shipped):** the **AI (monster) decks** and **Hit-Location decks** — the only core-gameplay cards Scribe lacks — plus any **card images/art** and verbatim **effect text**.
 
-Host-provided content lives under `content/assets/` (and is shared only with the players in your live room, who own the game). It is **gitignored and never source-controlled or redistributed.** A CI check enforces that no card art or verbatim card prose lands in the repo.
+Host-provided content lives under `content/local/` and `content/assets/` (and is shared only with the players in your live room, who own the game). It is **gitignored and never source-controlled or redistributed** — `.gitignore` blocks raster image formats repo-wide (with an allowlist for the app's own UI assets). A pre-commit / CI guard that also rejects verbatim card prose is a recommended follow-up.
 
 ## Development
 

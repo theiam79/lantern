@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json;
 using Lantern.Contracts;
 using Lantern.Engine;
@@ -9,10 +8,12 @@ using Microsoft.EntityFrameworkCore;
 namespace Lantern.Server.Rooms;
 
 /// <summary>
-/// Authoritative single-writer for one room. A SemaphoreSlim serializes all mutations, so
-/// intents commit in order: validate → dedupe → Reduce → persist (journal + room in one
-/// SaveChanges, before broadcast) → full-state Snapshot push. State is held in memory and
-/// rebuilt from snapshot + journal on rehydrate.
+/// Authoritative single-writer for one room. <see cref="_gate"/> serializes EVERY method that
+/// reads or mutates <c>_roster</c>/<c>_state</c>/<c>_lastSeq</c> (SignalR invokes the shared actor
+/// from multiple connections concurrently). Each gameplay commit is atomic: Reduce → persist
+/// journal + room + snapshot in ONE SaveChanges → only then update in-memory state + broadcast.
+/// Snapshot pruning is best-effort (never on the commit's critical path). State is rebuilt from
+/// the latest snapshot + journal tail on rehydrate; undo re-folds from the nearest prior snapshot.
 /// </summary>
 internal sealed class RoomActor(
     string roomCode,
@@ -34,16 +35,14 @@ internal sealed class RoomActor(
 
     private ShowdownState? _state;
     private long _lastSeq;
-    private string _contentPackId = pack.PackId;
     private string? _roomPasswordHash;
-    private string _hostPlayerId = "";
 
     public string RoomCode => roomCode;
 
     private sealed class Member
     {
         public required string PlayerId { get; init; }
-        public required string DisplayName { get; set; }
+        public required string DisplayName { get; init; }
         public required bool IsHost { get; init; }
         public required string TokenHash { get; init; }
         public bool Connected { get; set; }
@@ -52,44 +51,41 @@ internal sealed class RoomActor(
 
     // ---------- lifecycle ----------
 
-    public async Task<CreateRoomResult> InitNewAsync(CreateRoomRequest req)
+    public async Task<CreateRoomResult> InitNewAsync(CreateRoomRequest req, string connectionId)
     {
-        var playerId = Guid.NewGuid().ToString("N");
-        var token = Crypto.NewToken();
-        _hostPlayerId = playerId;
-        _contentPackId = req.ContentPackId;
-        _roomPasswordHash = string.IsNullOrEmpty(req.RoomPassword) ? null : Crypto.Hash(req.RoomPassword);
-        var now = DateTimeOffset.UtcNow;
-        _roster[playerId] = new Member { PlayerId = playerId, DisplayName = req.DisplayName, IsHost = true, TokenHash = Crypto.Hash(token), Connected = true };
-
-        using var scope = scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
-        db.Rooms.Add(new RoomRow
+        await _gate.WaitAsync();
+        try
         {
-            RoomCode = roomCode, ContentPackId = _contentPackId, RoomPasswordHash = _roomPasswordHash,
-            HostPlayerId = playerId, LastSeq = 0, Status = "lobby", ContractVersion = Protocol.Version,
-            CreatedAt = now, UpdatedAt = now,
-        });
-        db.RoomMembers.Add(new RoomMemberRow
-        {
-            RoomCode = roomCode, PlayerId = playerId, DisplayName = req.DisplayName, IsHost = true,
-            PlayerTokenHash = _roster[playerId].TokenHash, JoinedAt = now, LastSeenAt = now,
-        });
-        db.Journal.Add(new JournalRow { RoomCode = roomCode, Seq = 0, ActorPlayerId = playerId, CommittedAt = now });
-        db.Snapshots.Add(new SnapshotRow { RoomCode = roomCode, Seq = 0, ContractVersion = Protocol.Version, StateJson = null, At = now });
-        await db.SaveChangesAsync();
+            var playerId = Guid.NewGuid().ToString("N");
+            var token = Crypto.NewToken();
+            _roomPasswordHash = string.IsNullOrEmpty(req.RoomPassword) ? null : Crypto.Hash(req.RoomPassword);
+            var now = DateTimeOffset.UtcNow;
+            _roster[playerId] = new Member { PlayerId = playerId, DisplayName = req.DisplayName, IsHost = true, TokenHash = Crypto.Hash(token), Connected = true, ConnectionId = connectionId };
 
-        return new CreateRoomResult(roomCode, playerId, token, Protocol.Version, SnapshotMessage());
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
+            db.Rooms.Add(new RoomRow
+            {
+                RoomCode = roomCode, ContentPackId = req.ContentPackId, RoomPasswordHash = _roomPasswordHash,
+                HostPlayerId = playerId, LastSeq = 0, Status = "lobby", ContractVersion = Protocol.Version, CreatedAt = now, UpdatedAt = now,
+            });
+            db.RoomMembers.Add(new RoomMemberRow { RoomCode = roomCode, PlayerId = playerId, DisplayName = req.DisplayName, IsHost = true, PlayerTokenHash = _roster[playerId].TokenHash, JoinedAt = now, LastSeenAt = now });
+            db.Journal.Add(new JournalRow { RoomCode = roomCode, Seq = 0, ActorPlayerId = playerId, CommittedAt = now });
+            db.Snapshots.Add(new SnapshotRow { RoomCode = roomCode, Seq = 0, ContractVersion = Protocol.Version, StateJson = null, At = now });
+            await db.SaveChangesAsync();
+
+            return new CreateRoomResult(roomCode, playerId, token, Protocol.Version, SnapshotMessage());
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task RehydrateAsync()
     {
+        // Runs before the actor is published to other connections — no gate needed.
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
         var room = await db.Rooms.FindAsync(roomCode) ?? throw new InvalidOperationException("room missing");
-        _contentPackId = room.ContentPackId;
         _roomPasswordHash = room.RoomPasswordHash;
-        _hostPlayerId = room.HostPlayerId;
         _lastSeq = room.LastSeq;
 
         foreach (var m in await db.RoomMembers.Where(m => m.RoomCode == roomCode).ToListAsync())
@@ -99,17 +95,15 @@ internal sealed class RoomActor(
         var fromState = snap?.StateJson is { } sj ? JsonSerializer.Deserialize<ShowdownState>(sj, Json) : null;
         var fromSeq = snap?.Seq ?? -1;
 
-        var rows = await db.Journal.Where(j => j.RoomCode == roomCode && j.Seq > fromSeq).OrderBy(j => j.Seq).ToListAsync();
-        var tail = rows.Select(ToEntry).ToList();
+        var allRows = await db.Journal.Where(j => j.RoomCode == roomCode).OrderBy(j => j.Seq).ToListAsync();
+        var tail = allRows.Where(j => j.Seq > fromSeq).Select(ToEntry).ToList();
         _state = ShowdownEngine.Fold(fromState, tail, pack);
-
-        foreach (var r in await db.Journal.Where(j => j.RoomCode == roomCode).OrderBy(j => j.Seq).ToListAsync())
-            IndexCommitted(ToEntry(r));
+        foreach (var r in allRows) IndexCommitted(ToEntry(r));
 
         logger.LogInformation("Rehydrated room {Room} at seq {Seq} ({Members} members)", roomCode, _lastSeq, _roster.Count);
     }
 
-    public async Task<JoinRoomResult> JoinAsync(JoinRoomRequest req)
+    public async Task<JoinRoomResult> JoinAsync(JoinRoomRequest req, string connectionId)
     {
         await _gate.WaitAsync();
         try
@@ -120,15 +114,11 @@ internal sealed class RoomActor(
             var playerId = Guid.NewGuid().ToString("N");
             var token = Crypto.NewToken();
             var now = DateTimeOffset.UtcNow;
-            _roster[playerId] = new Member { PlayerId = playerId, DisplayName = req.DisplayName, IsHost = false, TokenHash = Crypto.Hash(token), Connected = true };
+            _roster[playerId] = new Member { PlayerId = playerId, DisplayName = req.DisplayName, IsHost = false, TokenHash = Crypto.Hash(token), Connected = true, ConnectionId = connectionId };
 
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
-            db.RoomMembers.Add(new RoomMemberRow
-            {
-                RoomCode = roomCode, PlayerId = playerId, DisplayName = req.DisplayName, IsHost = false,
-                PlayerTokenHash = _roster[playerId].TokenHash, JoinedAt = now, LastSeenAt = now,
-            });
+            db.RoomMembers.Add(new RoomMemberRow { RoomCode = roomCode, PlayerId = playerId, DisplayName = req.DisplayName, IsHost = false, PlayerTokenHash = _roster[playerId].TokenHash, JoinedAt = now, LastSeenAt = now });
             await db.SaveChangesAsync();
 
             return new JoinRoomResult(roomCode, playerId, token, Protocol.Version, SnapshotMessage());
@@ -136,29 +126,43 @@ internal sealed class RoomActor(
         finally { _gate.Release(); }
     }
 
-    public async Task<JoinRoomResult> ResumeAsync(ResumeRequest req)
+    public async Task<JoinRoomResult> ResumeAsync(ResumeRequest req, string connectionId)
     {
-        if (!_roster.TryGetValue(req.PlayerId, out var m) || Crypto.Hash(req.PlayerToken) != m.TokenHash)
-            throw new HubException("bad_token");
-        await Task.CompletedTask;
-        return new JoinRoomResult(roomCode, req.PlayerId, req.PlayerToken, Protocol.Version, SnapshotMessage());
+        await _gate.WaitAsync();
+        try
+        {
+            if (!_roster.TryGetValue(req.PlayerId, out var m) || !Crypto.FixedTimeEquals(Crypto.Hash(req.PlayerToken), m.TokenHash))
+                throw new HubException("bad_token");
+            m.ConnectionId = connectionId;
+            m.Connected = true;
+            return new JoinRoomResult(roomCode, req.PlayerId, req.PlayerToken, Protocol.Version, SnapshotMessage());
+        }
+        finally { _gate.Release(); }
     }
 
-    public void BindConnection(string playerId, string connectionId)
+    public async Task BroadcastPresenceAsync()
     {
-        if (_roster.TryGetValue(playerId, out var m)) { m.ConnectionId = connectionId; m.Connected = true; }
+        await _gate.WaitAsync();
+        try { await hub.Clients.Group(roomCode).Presence(new ServerMessage<RosterDto>(Protocol.Version, _lastSeq, "presence", Roster())); }
+        finally { _gate.Release(); }
     }
 
-    public async Task BroadcastPresenceAsync() =>
-        await hub.Clients.Group(roomCode).Presence(new ServerMessage<RosterDto>(Protocol.Version, _lastSeq, "presence", Roster()));
-
-    public async Task SendSnapshotToAsync(string connectionId) =>
-        await hub.Clients.Client(connectionId).Snapshot(SnapshotMessage());
+    public async Task SendSnapshotToAsync(string connectionId)
+    {
+        await _gate.WaitAsync();
+        try { await hub.Clients.Client(connectionId).Snapshot(SnapshotMessage()); }
+        finally { _gate.Release(); }
+    }
 
     public async Task MarkDisconnectedAsync(string playerId, string connectionId)
     {
-        if (_roster.TryGetValue(playerId, out var m) && m.ConnectionId == connectionId) { m.Connected = false; m.ConnectionId = null; }
-        await BroadcastPresenceAsync();
+        await _gate.WaitAsync();
+        try
+        {
+            if (_roster.TryGetValue(playerId, out var m) && m.ConnectionId == connectionId) { m.Connected = false; m.ConnectionId = null; }
+            await hub.Clients.Group(roomCode).Presence(new ServerMessage<RosterDto>(Protocol.Version, _lastSeq, "presence", Roster()));
+        }
+        finally { _gate.Release(); }
     }
 
     // ---------- gameplay ----------
@@ -168,7 +172,7 @@ internal sealed class RoomActor(
         await _gate.WaitAsync();
         try
         {
-            if (!_roster.TryGetValue(env.PlayerId, out var member) || Crypto.Hash(env.PlayerToken) != member.TokenHash)
+            if (!_roster.TryGetValue(env.PlayerId, out var member) || !Crypto.FixedTimeEquals(Crypto.Hash(env.PlayerToken), member.TokenHash))
                 return new IntentAck(false, null, "bad_token", env.ClientIntentId);
 
             if (_committedIntents.TryGetValue(env.ClientIntentId, out var prior))
@@ -192,10 +196,12 @@ internal sealed class RoomActor(
         finally { _gate.Release(); }
     }
 
+    // gate is held by SubmitAsync for all of the methods below.
+
     private async Task<IntentAck> CommitAsync(Intent intent, string actorPlayerId, string clientIntentId)
     {
-        // Resolve a deterministic seed at StartShowdown so replay is stable (journal the resolved intent).
-        if (intent is StartShowdownIntent { MasterSeed: null } ssi)
+        // Always mint the seed server-side so no client can rig the deck (and replay stays deterministic).
+        if (intent is StartShowdownIntent ssi)
             intent = ssi with { MasterSeed = Crypto.NewSeed() };
 
         var seq = _lastSeq + 1;
@@ -207,98 +213,106 @@ internal sealed class RoomActor(
         using (var scope = scopes.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
-            db.Journal.Add(new JournalRow
-            {
-                RoomCode = roomCode, Seq = seq, ActorPlayerId = actorPlayerId,
-                IntentJson = JsonSerializer.Serialize(intent, Json), ClientIntentId = clientIntentId, CommittedAt = now,
-            });
-            db.Snapshots.Add(new SnapshotRow
-            {
-                RoomCode = roomCode, Seq = seq, ContractVersion = Protocol.Version,
-                StateJson = result.State is null ? null : JsonSerializer.Serialize(result.State, Json), At = now,
-            });
-            var room = await db.Rooms.FindAsync(roomCode);
-            if (room is not null)
-            {
-                room.LastSeq = seq;
-                room.UpdatedAt = now;
-                room.Status = result.State?.Status == ShowdownStatus.Ended ? "ended"
-                    : result.State is not null ? "showdown" : room.Status;
-            }
-            await db.SaveChangesAsync();
-            await PruneSnapshotsAsync(db);
+            db.Journal.Add(new JournalRow { RoomCode = roomCode, Seq = seq, ActorPlayerId = actorPlayerId, IntentJson = JsonSerializer.Serialize(intent, Json), ClientIntentId = clientIntentId, CommittedAt = now });
+            db.Snapshots.Add(SnapshotRowFor(seq, result.State, now));
+            await UpdateRoomAsync(db, seq, result.State, now);
+            await db.SaveChangesAsync(); // atomic: journal + snapshot + room in one transaction
         }
 
+        // Only after the durable commit: advance in-memory state and tell clients.
         _state = result.State;
         _lastSeq = seq;
         _committedIntents[clientIntentId] = seq;
         _gameplaySeqs.Add(seq);
-
         await hub.Clients.Group(roomCode).Snapshot(SnapshotMessage());
-        return new IntentAck(true, seq, null, clientIntentId);
-    }
 
-    private async Task<IntentAck> SetRoomPasswordAsync(SetRoomPasswordIntent sp, string clientIntentId)
-    {
-        _roomPasswordHash = string.IsNullOrEmpty(sp.Password) ? null : Crypto.Hash(sp.Password);
-        using var scope = scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
-        var room = await db.Rooms.FindAsync(roomCode);
-        if (room is not null) { room.RoomPasswordHash = _roomPasswordHash; room.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); }
-        _committedIntents[clientIntentId] = _lastSeq;
-        return new IntentAck(true, _lastSeq, null, clientIntentId);
+        await BestEffortPruneAsync();
+        return new IntentAck(true, seq, null, clientIntentId);
     }
 
     private async Task<IntentAck> UndoAsync(UndoIntent undo, string actorPlayerId, string clientIntentId)
     {
         var live = _gameplaySeqs.Where(s => !_reverted.Contains(s)).OrderBy(s => s).ToList();
-        var toRevert = undo.TargetSeq is { } t
-            ? live.Where(s => s > t).ToList()
-            : live.TakeLast(Math.Max(1, undo.Count)).ToList();
+        var toRevert = undo.TargetSeq is { } t ? live.Where(s => s > t).ToList() : live.TakeLast(Math.Max(1, undo.Count)).ToList();
         if (toRevert.Count == 0)
             return new IntentAck(false, null, "nothing-to-undo", clientIntentId);
 
+        var minRev = toRevert.Min();
+        var revertedAll = new HashSet<long>(_reverted);
+        foreach (var s in toRevert) revertedAll.Add(s);
+
         var seq = _lastSeq + 1;
         var now = DateTimeOffset.UtcNow;
+        ShowdownState? newState;
         using (var scope = scopes.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
-            db.Journal.Add(new JournalRow
-            {
-                RoomCode = roomCode, Seq = seq, ActorPlayerId = actorPlayerId,
-                IntentJson = JsonSerializer.Serialize<Intent>(undo, Json),
-                RevertedSeqsJson = JsonSerializer.Serialize(toRevert), ClientIntentId = clientIntentId, CommittedAt = now,
-            });
-            var room = await db.Rooms.FindAsync(roomCode);
-            if (room is not null) { room.LastSeq = seq; room.UpdatedAt = now; }
-            await db.SaveChangesAsync();
+            // Re-fold from the nearest snapshot strictly before the earliest reverted seq, then
+            // replay the (non-reverted) tail. With per-commit snapshots this is usually just the
+            // base snapshot (no Reduce re-execution), which also avoids re-deriving against an
+            // edited content pack.
+            var baseSnap = await db.Snapshots.Where(s => s.RoomCode == roomCode && s.Seq < minRev).OrderByDescending(s => s.Seq).FirstOrDefaultAsync();
+            var baseState = baseSnap?.StateJson is { } sj ? JsonSerializer.Deserialize<ShowdownState>(sj, Json) : null;
+            var baseSeq = baseSnap?.Seq ?? -1;
+            var rows = await db.Journal.Where(j => j.RoomCode == roomCode && j.Seq > baseSeq).OrderBy(j => j.Seq).ToListAsync();
+            var tail = rows.Select(ToEntry).Where(e => !revertedAll.Contains(e.Seq)).ToList();
+            newState = ShowdownEngine.Fold(baseState, tail, pack);
 
-            // Re-fold from genesis over the full journal (small at 4 players).
-            var rows = await db.Journal.Where(j => j.RoomCode == roomCode).OrderBy(j => j.Seq).ToListAsync();
-            _state = ShowdownEngine.Fold(null, rows.Select(ToEntry).ToList(), pack);
-            db.Snapshots.Add(new SnapshotRow
-            {
-                RoomCode = roomCode, Seq = seq, ContractVersion = Protocol.Version,
-                StateJson = _state is null ? null : JsonSerializer.Serialize(_state, Json), At = now,
-            });
-            await db.SaveChangesAsync();
-            await PruneSnapshotsAsync(db);
+            db.Journal.Add(new JournalRow { RoomCode = roomCode, Seq = seq, ActorPlayerId = actorPlayerId, IntentJson = JsonSerializer.Serialize<Intent>(undo, Json), RevertedSeqsJson = JsonSerializer.Serialize(toRevert), ClientIntentId = clientIntentId, CommittedAt = now });
+            db.Snapshots.Add(SnapshotRowFor(seq, newState, now));
+            await UpdateRoomAsync(db, seq, newState, now);
+            await db.SaveChangesAsync(); // atomic
         }
 
-        foreach (var s in toRevert) _reverted.Add(s);
+        _state = newState;
         _lastSeq = seq;
+        foreach (var s in toRevert) _reverted.Add(s);
         _committedIntents[clientIntentId] = seq;
-
         await hub.Clients.Group(roomCode).Snapshot(SnapshotMessage());
+
+        await BestEffortPruneAsync();
         return new IntentAck(true, seq, null, clientIntentId);
+    }
+
+    private async Task<IntentAck> SetRoomPasswordAsync(SetRoomPasswordIntent sp, string clientIntentId)
+    {
+        // Room-level control (not part of the gameplay journal). Intentionally not deduped by
+        // ClientIntentId — it carries no seq and is idempotent in effect.
+        _roomPasswordHash = string.IsNullOrEmpty(sp.Password) ? null : Crypto.Hash(sp.Password);
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
+        var room = await db.Rooms.FindAsync(roomCode);
+        if (room is not null) { room.RoomPasswordHash = _roomPasswordHash; room.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); }
+        return new IntentAck(true, _lastSeq, null, clientIntentId);
     }
 
     // ---------- helpers ----------
 
-    private async Task PruneSnapshotsAsync(LanternDbContext db)
+    private SnapshotRow SnapshotRowFor(long seq, ShowdownState? state, DateTimeOffset at) => new()
     {
-        var keep = await db.Snapshots.Where(s => s.RoomCode == roomCode).OrderByDescending(s => s.Seq).Skip(5).ToListAsync();
-        if (keep.Count > 0) { db.Snapshots.RemoveRange(keep); await db.SaveChangesAsync(); }
+        RoomCode = roomCode, Seq = seq, ContractVersion = Protocol.Version,
+        StateJson = state is null ? null : JsonSerializer.Serialize(state, Json), At = at,
+    };
+
+    private async Task UpdateRoomAsync(LanternDbContext db, long seq, ShowdownState? state, DateTimeOffset now)
+    {
+        var room = await db.Rooms.FindAsync(roomCode);
+        if (room is null) return;
+        room.LastSeq = seq;
+        room.UpdatedAt = now;
+        room.Status = state?.Status == ShowdownStatus.Ended ? "ended" : state is not null ? "showdown" : room.Status;
+    }
+
+    private async Task BestEffortPruneAsync()
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<LanternDbContext>();
+            var stale = await db.Snapshots.Where(s => s.RoomCode == roomCode).OrderByDescending(s => s.Seq).Skip(5).ToListAsync();
+            if (stale.Count > 0) { db.Snapshots.RemoveRange(stale); await db.SaveChangesAsync(); }
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "snapshot prune failed for {Room} (non-fatal)", roomCode); }
     }
 
     private void IndexCommitted(JournalEntry e)

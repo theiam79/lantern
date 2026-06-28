@@ -46,10 +46,21 @@ content/scans/
 # host-provided mechanical decks (e.g. hit-location) — never source-controlled
 content/local/
 *.kdmscan
-# card image formats anywhere under content/
-content/**/*.png
-content/**/*.jpg
-content/**/*.jpeg
-content/**/*.webp
-content/**/*.heic
-content/**/*.tiff
+# Card art must never be committed anywhere (Bring Your Own Cards). Ignore raster image
+# formats repo-wide, then allow the app's own (non-KDM) UI assets back in.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.heic
+*.heif
+*.tif
+*.tiff
+*.gif
+*.bmp
+*.PNG
+*.JPG
+*.JPEG
+*.WEBP
+!web/src/assets/**
+!web/public/**

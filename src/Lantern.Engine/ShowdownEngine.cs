@@ -33,9 +33,13 @@ public static class ShowdownEngine
             DrawHitLocationsIntent dl => DrawHitLocations(state, dl, seq, pack),
             EnterWoundIntent w => EnterWound(state, w, seq),
             ApplyAttackResultIntent ap => ApplyAttackResult(state, ap, seq),
-            RecordMonsterTurnIntent r => ReduceResult.Ok(state with { MonsterTurnNote = r.Note, LastSeq = seq }),
+            RecordMonsterTurnIntent r => state.Status == ShowdownStatus.Ended
+                ? ReduceResult.Reject("showdown-ended")
+                : ReduceResult.Ok(state with { MonsterTurnNote = r.Note, LastSeq = seq }),
             HostOverrideIntent ho => HostOverride(state, ho, seq),
-            EndShowdownIntent => ReduceResult.Ok(state with { Status = ShowdownStatus.Ended, LastSeq = seq }),
+            EndShowdownIntent => state.Status == ShowdownStatus.Ended
+                ? ReduceResult.Reject("already-ended")
+                : ReduceResult.Ok(state with { Status = ShowdownStatus.Ended, LastSeq = seq }),
             _ => ReduceResult.Reject("unhandled-intent"),
         };
     }
@@ -144,7 +148,8 @@ public static class ShowdownEngine
 
         var byId = cards.ToDictionary(c => c.Id);
         var count = state.Attack.EnteredHitCount ?? 0;
-        var (drawnIds, deck, cursors) = HitLocationDeck.Draw(state.Deck, count, state.Rng);
+        var (drawnIds, deck, cursors) = HitLocationDeck.Draw(
+            state.Deck, count, state.Rng, id => byId.TryGetValue(id, out var d) && d.IsTrap);
         var woundsOn = TargetNumbers.WoundsOn(weapon, surv.Attributes, state.Monster.Base, pack.Formula);
 
         var drawn = drawnIds.Select(id =>
@@ -244,6 +249,18 @@ public static class ShowdownEngine
                 if (!state.Survivors.TryGetValue(id, out var s)) return ReduceResult.Reject("unknown-survivor");
                 var s2 = s with { Dead = patch.Value.GetBoolean() };
                 return ReduceResult.Ok(state with { Survivors = state.Survivors.SetItem(id, s2), LastSeq = seq });
+            }
+            if (path.StartsWith("attack.", StringComparison.Ordinal) && path.EndsWith(".outcome", StringComparison.Ordinal))
+            {
+                if (state.Attack is null) return ReduceResult.Reject("no-attack-in-flight");
+                var cardId = path["attack.".Length..^".outcome".Length];
+                var locs = state.Attack.DrawnLocations;
+                var idx = -1;
+                for (var i = 0; i < locs.Length; i++) if (locs[i].CardId == cardId) { idx = i; break; }
+                if (idx < 0) return ReduceResult.Reject("location-not-found");
+                var outcome = Enum.Parse<WoundOutcome>(patch.Value.GetString() ?? "", ignoreCase: true);
+                var updated = locs.SetItem(idx, locs[idx] with { Result = outcome });
+                return ReduceResult.Ok(state with { Attack = state.Attack with { DrawnLocations = updated }, LastSeq = seq });
             }
             return ReduceResult.Reject("override-path-not-whitelisted");
         }

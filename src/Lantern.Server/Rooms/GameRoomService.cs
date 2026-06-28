@@ -42,12 +42,11 @@ public sealed class GameRoomService(
         var pack = content.GetPack(req.ContentPackId) ?? throw new HubException("unknown_content_pack");
 
         var actor = new RoomActor(Crypto.NewRoomCode(), pack, scopes, hub, loggers.CreateLogger<RoomActor>());
-        var result = await actor.InitNewAsync(req);
+        var result = await actor.InitNewAsync(req, connectionId);
         _rooms[result.RoomCode] = actor;
 
         await hub.Groups.AddToGroupAsync(connectionId, result.RoomCode);
         _connections[connectionId] = (result.RoomCode, result.PlayerId);
-        actor.BindConnection(result.PlayerId, connectionId);
         return result;
     }
 
@@ -56,10 +55,9 @@ public sealed class GameRoomService(
         RequireContractVersion(req.ContractVersion);
         var actor = await GetOrLoadAsync(req.RoomCode) ?? throw new HubException("room_not_found");
 
-        var result = await actor.JoinAsync(req);
+        var result = await actor.JoinAsync(req, connectionId);
         await hub.Groups.AddToGroupAsync(connectionId, req.RoomCode);
         _connections[connectionId] = (req.RoomCode, result.PlayerId);
-        actor.BindConnection(result.PlayerId, connectionId);
         await actor.BroadcastPresenceAsync();
         return result;
     }
@@ -69,10 +67,9 @@ public sealed class GameRoomService(
         RequireContractVersion(req.ContractVersion);
         var actor = await GetOrLoadAsync(req.RoomCode) ?? throw new HubException("room_not_found");
 
-        var result = await actor.ResumeAsync(req);
+        var result = await actor.ResumeAsync(req, connectionId);
         await hub.Groups.AddToGroupAsync(connectionId, req.RoomCode);
         _connections[connectionId] = (req.RoomCode, result.PlayerId);
-        actor.BindConnection(result.PlayerId, connectionId);
         await actor.BroadcastPresenceAsync();
         return result;
     }

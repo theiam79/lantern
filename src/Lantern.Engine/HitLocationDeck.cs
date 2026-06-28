@@ -20,9 +20,13 @@ public static class HitLocationDeck
         return (new HitLocationDeckState(drawPile, [], []), next);
     }
 
-    /// <summary>Pop <paramref name="count"/> cards; reshuffle the discard back in if the draw pile empties.</summary>
+    /// <summary>
+    /// Pop up to <paramref name="count"/> cards; reshuffle the discard back in if the draw pile
+    /// empties. If <paramref name="stopAfter"/> is supplied and a popped card matches (a Trap),
+    /// the draw stops immediately after including it (the rest of the count is left undrawn).
+    /// </summary>
     public static (ImmutableArray<string> Drawn, HitLocationDeckState Deck, RngCursors Cursors) Draw(
-        HitLocationDeckState deck, int count, RngCursors cursors)
+        HitLocationDeckState deck, int count, RngCursors cursors, Func<string, bool>? stopAfter = null)
     {
         var drawPile = deck.DrawPile.ToList();
         var discard = deck.DiscardPile.ToList();
@@ -40,8 +44,10 @@ public static class HitLocationDeck
                 cur = next;
             }
 
-            drawn.Add(drawPile[0]);
+            var top = drawPile[0];
             drawPile.RemoveAt(0);
+            drawn.Add(top);
+            if (stopAfter?.Invoke(top) == true) break; // Trap ends the draw immediately
         }
 
         var newDeck = deck with
